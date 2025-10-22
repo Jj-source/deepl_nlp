@@ -43,3 +43,4 @@ venv.bak/
 *.swp
 *.swo
 *~
+assignment1/embeddings/glove.6B.100d.txt.gz
