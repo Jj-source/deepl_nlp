@@ -1,4 +1,3 @@
-```markdown
 # NMT Homework (EN→DE)
 
 Train an English→German translation model. Save a checkpoint. Report **perplexity** and **sacreBLEU**. Show a few example translations. Optionally export predictions for ML-Arena.
@@ -162,7 +161,3 @@ model.load_state_dict(state["model_state"], strict=False)
 * Keep `ignore_index=pad_id` and `reduction='sum'` for correct PPL.
 * Use `reshape` on logits before loss.
 * Use `clip_grad_norm_` to stabilize training.
-
-```
-::contentReference[oaicite:0]{index=0}
-```
