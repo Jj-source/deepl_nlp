@@ -45,4 +45,5 @@ venv.bak/
 *~
 assignment1/embeddings/glove.6B.100d.txt.gz
 
-.pt
+**/**.pt
+*/*.pt
