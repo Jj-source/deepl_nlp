@@ -53,76 +53,125 @@ def encode(tokens: List[str], stoi: Dict[str, int], add_sos_eos: bool = False) -
 # Model scaffolding
 # -------------------------
 
-class Encoder(nn.Module):
-    """
-    Student-implemented encoder.
-    Expected behavior:
-      forward(src: LongTensor[B, S], src_lens: LongTensor[B]) -> Tuple[Tensor, Tuple[Tensor, Tensor]]
-    Returns:
-      - outputs: Tensor[B, S, H] (padded time-major outputs)
-      - hidden:  RNN-style tuple (h, c) or similar state your decoder expects
-    """
-    def __init__(self, vocab_size: int, emb_dim: int, hid_dim: int,
-                 num_layers: int = 1, dropout: float = 0.1):
-        super().__init__()
-        # TODO: define embeddings and encoder layers to match your notebook training
-        raise NotImplementedError("Implement Encoder __init__.")
 
-    def forward(self, src: torch.Tensor, src_lens: torch.Tensor):
-        # TODO: implement packed sequence handling and return (outputs, hidden)
-        raise NotImplementedError("Implement Encoder.forward.")
+class EncoderBidirectionalAttn(nn.Module):
+  
+  def __init__(self, vocab_size, emb_dim, hid_dim, num_layers=1, dropout=0.1):
+    
+    super().__init__()
+    self.num_layers = num_layers
+    self.hid_dim = hid_dim
+    self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
+    self.rnn = nn.GRU(emb_dim, hid_dim, num_layers=num_layers, batch_first=True, bidirectional=True,
+                       dropout=dropout if num_layers > 1 else 0.0)
+    
+  def forward(self, src, src_lens):
+    
+    emb = self.emb(src)
+    packed = nn.utils.rnn.pack_padded_sequence(emb, src_lens.cpu(), batch_first=True, enforce_sorted=False)
+    
+    out, h = self.rnn(packed)
+    out, _ = nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
+    h = h.view(self.num_layers, 2, -1, self.hid_dim).sum(dim=1)
+    return out, h
 
-
+ 
 class Decoder(nn.Module):
-    """
-    Student-implemented decoder.
-    Expected behavior:
-      forward(tgt_in: LongTensor[B, T], hidden) -> Tuple[Tensor, Any]
-    Returns:
-      - logits: Tensor[B, T, V] (distributions before softmax over target vocab)
-      - hidden: updated recurrent state
-    """
-    def __init__(self, vocab_size: int, emb_dim: int, hid_dim: int,
-                 num_layers: int = 1, dropout: float = 0.1):
-        super().__init__()
-        # TODO: define embeddings, recurrent layers, and output projection
-        raise NotImplementedError("Implement Decoder __init__.")
-
-    def forward(self, tgt_in: torch.Tensor, hidden):
-        # TODO: return (logits, hidden)
-        raise NotImplementedError("Implement Decoder.forward.")
-
-
+  
+  def __init__(self, vocab_size, emb_dim, hid_dim, num_layers=1, dropout=0.1):
+      
+    super().__init__()
+    self.emb = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
+    self.attention = LuongAttention(hid_dim, 2 * hid_dim, score_type='general')
+    self.rnn = nn.GRU(emb_dim + 2 * hid_dim, hid_dim, num_layers=num_layers, batch_first=True, 
+                     dropout=dropout if num_layers > 1 else 0.0)
+    
+    self.proj = nn.Linear(hid_dim, vocab_size)
+    self.dropout = nn.Dropout(dropout)
+    
+  def forward_step(self, tgt_in, hidden, encoder_outputs):
+      emb = self.dropout(self.emb(tgt_in))  
+        
+      
+      h = hidden[-1:].permute(1, 0, 2)
+        
+      context, attn_weights = self.attention(h, encoder_outputs)
+      emb = torch.cat([emb, context], dim=2)  
+        
+      out, hidden = self.rnn(emb, hidden)
+      logits = self.proj(out)
+      return logits, hidden, attn_weights
+        
+  def forward(self, tgt_in, hidden, encoder_outputs):
+    
+    batch_size, seq_len = tgt_in.size()
+    outputs = []
+        
+    for i in range(seq_len):
+      token = tgt_in[:, i:i+1]
+      logits, hidden, _ = self.forward_step(token, hidden, encoder_outputs)
+      outputs.append(logits)
+        
+    return torch.cat(outputs, dim=1), hidden
+        
 class Seq2Seq(nn.Module):
-    """
-    Student-implemented Seq2Seq wrapper that ties Encoder and Decoder.
-
-    Required methods:
-      - forward(src, src_lens, tgt_in) -> logits [B, T, V]
-      - greedy_decode(src, src_lens, max_len, sos_id, eos_id) -> LongTensor[B, max_len]
-        Greedy decoding should stop at <eos> per sequence and pad remainder with <eos>.
-    """
-    def __init__(self, encoder: Encoder, decoder: Decoder):
-        super().__init__()
-        self.encoder = encoder
-        self.decoder = decoder
-
-    def forward(self, src: torch.Tensor, src_lens: torch.Tensor, tgt_in: torch.Tensor) -> torch.Tensor:
-        # TODO: encode, then decode with teacher forcing; return logits [B,T,V]
-        raise NotImplementedError("Implement Seq2Seq.forward.")
-
+  
+    def __init__(self, enc, dec):
+      super().__init__()
+      self.encoder = enc
+      self.decoder = dec
+      
+    def forward(self, src, src_lens, tgt_in):
+      enc_out , h = self.encoder(src, src_lens)
+      logits, _ = self.decoder(tgt_in, h, enc_out)
+      return logits
+      
     @torch.no_grad()
-    def greedy_decode(
-        self,
-        src: torch.Tensor,
-        src_lens: torch.Tensor,
-        max_len: int,
-        sos_id: int,
-        eos_id: int,
-    ) -> torch.Tensor:
-        """
-        TODO: implement token-by-token greedy decoding.
-        Must return LongTensor[B, max_len]. If <eos> is emitted at step t,
-        set positions > t to <eos> for that sequence.
-        """
-        raise NotImplementedError("Implement Seq2Seq.greedy_decode.")
+    def greedy_decode(self, src, src_lens, max_len, sos_id, eos_id):
+      
+        B = src.size(0)
+        
+        enc_out , h = self.encoder(src, src_lens)
+        
+        inputs = torch.full((B, 1), sos_id, dtype=torch.long, device=src.device)
+        outs = []
+        
+        for _ in range(max_len):
+            
+            logits, h, _ = self.decoder.forward_step(inputs, h, enc_out)
+            
+            nxt = logits[:, -1, :].argmax(-1, keepdim=True)
+            outs.append(nxt)
+            inputs = nxt
+            
+        
+        seqs = torch.cat(outs, dim=1)
+        
+        for i in range(B):
+            row = seqs[i]
+            
+            if (row == eos_id).any():
+              
+              idx = (row == eos_id).nonzero(as_tuple=False)[0].item()
+              
+              row[idx+1:] = eos_id
+        return seqs
+      
+      
+class LuongAttention(nn.Module):
+  def __init__(self, query_dim, key_dim, score_type='general'):
+    super().__init__()
+    self.score_type = score_type
+    if score_type == 'general':
+        self.Wa = nn.Linear(query_dim, key_dim, bias=False)  
+
+  def forward(self, query, keys):
+      if self.score_type == 'dot' and query.size(-1) == keys.size(-1):
+          scores = torch.bmm(query, keys.transpose(1, 2))
+      elif self.score_type == 'general':
+          scores = torch.bmm(self.Wa(query), keys.transpose(1, 2))
+      
+      weights = F.softmax(scores, dim=-1)
+      context = torch.bmm(weights, keys)  
+      
+      return context, weights
