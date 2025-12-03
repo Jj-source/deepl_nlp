@@ -1,1 +1,0 @@
-Validation perplexity: 6.29 | Public test perplexity: 6.25 | Public test BLEU: 25.39
