@@ -1,0 +1,7 @@
+Epoch 01 | train ppl: 43.98 | val ppl: 14.40
+Epoch 02 | train ppl: 9.72 | val ppl: 7.99
+Epoch 03 | train ppl: 5.28 | val ppl: 6.18
+Epoch 04 | train ppl: 3.64 | val ppl: 5.45
+Epoch 05 | train ppl: 2.83 | val ppl: 5.15
+
+Training time: 1190.31 seconds
